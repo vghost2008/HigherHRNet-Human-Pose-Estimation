@@ -24,8 +24,10 @@ import torch.nn.parallel
 import torch.optim
 import torch.utils.data
 import torch.utils.data.distributed
-from tensorboardX import SummaryWriter
-
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except ModuleNotFoundError:
+    from tensorboardX import SummaryWriter
 import _init_paths
 import models
 
@@ -224,8 +226,11 @@ def main_worker(
             # available GPUs if device_ids are not set
             model = torch.nn.parallel.DistributedDataParallel(model)
     elif args.gpu is not None:
-        torch.cuda.set_device(args.gpu)
-        model = model.cuda(args.gpu)
+        #torch.cuda.set_device(args.gpu)
+        #model = model.cuda(args.gpu)
+        #wj
+        torch.cuda.set_device("cuda:"+args.gpu)
+        model = model.cuda("cuda:"+args.gpu)
     else:
         model = torch.nn.DataParallel(model).cuda()
 
@@ -300,7 +305,7 @@ def main_worker(
                 'epoch': epoch + 1,
                 'model': cfg.MODEL.NAME,
                 'state_dict': model.state_dict(),
-                'best_state_dict': model.module.state_dict(),
+                #'best_state_dict': model.module.state_dict(), #wj
                 'perf': perf_indicator,
                 'optimizer': optimizer.state_dict(),
             }, best_model, final_output_dir)

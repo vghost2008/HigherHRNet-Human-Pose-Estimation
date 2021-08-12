@@ -265,6 +265,7 @@ class HeatmapParser(object):
         if adjust:
             ans = self.adjust(ans, det)
 
+        #某个人的scores为他有所有点的平均
         scores = [i[:, 2].mean() for i in ans[0]]
 
         if refine:

@@ -8,11 +8,11 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
+import cv2
 import argparse
 import os
 import pprint
-
+import glob
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.parallel
@@ -50,6 +50,10 @@ def parse_args():
     # general
     parser.add_argument('--cfg',
                         help='experiment configure file name',
+                        required=True,
+                        type=str)
+    parser.add_argument('--eval-folder',
+                        help='eval images floder',
                         required=True,
                         type=str)
 
@@ -148,12 +152,14 @@ def main():
     parser = HeatmapParser(cfg)
     all_preds = []
     all_scores = []
+    images_files = glob.glob(os.path.join(args.eval_folder,"*.jpg"))
+    images_files += glob.glob(os.path.join(args.eval_folder,"*.png"))
+    images_files += glob.glob(os.path.join(args.eval_folder,"*.jpeg"))
 
-    pbar = tqdm(total=len(test_dataset)) if cfg.TEST.LOG_PROGRESS else None
-    for i, (images, annos) in enumerate(data_loader):
-        assert 1 == images.size(0), 'Test batch size should be 1'
-
-        image = images[0].cpu().numpy()
+    pbar = tqdm(total=len(images_files))
+    for i, image_f in enumerate(images_files):
+        image = cv2.imread(image_f,cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)[:,:,::-1]
+        image_name = os.path.basename(image_f)
         # size at scale 1.0
         base_size, center, scale = get_multi_scale_size(
             image, cfg.DATASET.INPUT_SIZE, 1.0, min(cfg.TEST.SCALE_FACTOR)
@@ -193,11 +199,10 @@ def main():
         if cfg.TEST.LOG_PROGRESS:
             pbar.update()
         #wj
-        if i % cfg.PRINT_FREQ == 0:
-        #if True:
-            prefix = '{}_{}'.format(os.path.join(final_output_dir, 'result_valid'), i)
-            # logger.info('=> write {}'.format(prefix))
-            save_valid_image(image, final_results, '{}.jpg'.format(prefix), dataset=test_dataset.name)
+        if True:
+            prefix = os.path.join(final_output_dir,image_name)
+            logger.info('=> write {}'.format(prefix))
+            save_valid_image(image, final_results, prefix, dataset=test_dataset.name)
             # save_debug_images(cfg, image_resized, None, None, outputs, prefix)
 
         all_preds.append(final_results)
@@ -205,16 +210,6 @@ def main():
 
     if cfg.TEST.LOG_PROGRESS:
         pbar.close()
-
-    name_values, _ = test_dataset.evaluate(
-        cfg, all_preds, all_scores, final_output_dir
-    )
-
-    if isinstance(name_values, list):
-        for name_value in name_values:
-            _print_name_value(logger, name_value, cfg.MODEL.NAME)
-    else:
-        _print_name_value(logger, name_values, cfg.MODEL.NAME)
 
 
 if __name__ == '__main__':

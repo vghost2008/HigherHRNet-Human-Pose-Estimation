@@ -101,6 +101,9 @@ class CocoDataset(Dataset):
         Returns:
             tuple: Tuple (image, target). target is the object returned by ``coco.loadAnns``.
         """
+        #wj debug
+        index = index
+
         coco = self.coco
         img_id = self.ids[index]
         ann_ids = coco.getAnnIds(imgIds=img_id)
@@ -130,6 +133,8 @@ class CocoDataset(Dataset):
         return img, target
 
     def __len__(self):
+        #wj debug
+        #return min(len(self.ids),20)
         return len(self.ids)
 
     def __repr__(self):

@@ -35,6 +35,9 @@ def do_train(cfg, model, data_loader, loss_factory, optimizer, epoch,
     for i, (images, heatmaps, masks, joints) in enumerate(data_loader):
         # measure data loading time
         data_time.update(time.time() - end)
+        #wj
+        #print(next(model.parameters()).device)
+        images = images.to(next(model.parameters()).device)
 
         # compute output
         outputs = model(images)

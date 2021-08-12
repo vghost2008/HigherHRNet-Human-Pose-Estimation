@@ -8,11 +8,12 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
+import cv2
 import argparse
 import os
+import sys
 import pprint
-
+import glob
 import torch
 import torch.backends.cudnn as cudnn
 import torch.nn.parallel
@@ -21,7 +22,11 @@ import torch.utils.data
 import torch.utils.data.distributed
 import torchvision.transforms
 import torch.multiprocessing
-from tqdm import tqdm
+import pickle
+import numpy as np
+
+os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+
 
 import _init_paths
 import models
@@ -50,9 +55,12 @@ def parse_args():
     # general
     parser.add_argument('--cfg',
                         help='experiment configure file name',
-                        required=True,
+                        default='experiments/coco/higher_hrnet/w32_512_adam_lr1e-3.yaml',
                         type=str)
-
+    parser.add_argument('--eval-folder',
+                        help='eval images floder',
+                        default='/home/wj/ai/mldata/Le2i/FallDown/test/images/1',
+                        type=str)
     parser.add_argument('opts',
                         help="Modify config options using the command-line",
                         default=None,
@@ -61,7 +69,6 @@ def parse_args():
     args = parser.parse_args()
 
     return args
-
 
 # markdown format output
 def _print_name_value(logger, name_value, full_arch_name):
@@ -83,11 +90,13 @@ def _print_name_value(logger, name_value, full_arch_name):
          ' |'
     )
 
-
 def main():
     args = parse_args()
     update_config(cfg, args)
     check_config(cfg)
+    cfg.defrost()
+    cfg.TEST.MODEL_FILE = "models/pytorch/pose_coco/pose_higher_hrnet_w32_512.pth"
+    cfg.freeze()
 
     logger, final_output_dir, tb_log_dir = create_logger(
         cfg, args.cfg, 'valid'
@@ -126,8 +135,6 @@ def main():
     model = torch.nn.DataParallel(model, device_ids=cfg.GPUS).cuda()
     model.eval()
 
-    data_loader, test_dataset = make_test_dataloader(cfg)
-
     if cfg.MODEL.NAME == 'pose_hourglass':
         transforms = torchvision.transforms.Compose(
             [
@@ -146,76 +153,83 @@ def main():
         )
 
     parser = HeatmapParser(cfg)
-    all_preds = []
-    all_scores = []
 
-    pbar = tqdm(total=len(test_dataset)) if cfg.TEST.LOG_PROGRESS else None
-    for i, (images, annos) in enumerate(data_loader):
-        assert 1 == images.size(0), 'Test batch size should be 1'
+    for dir in os.listdir(args.eval_folder):
+        cur_dir = os.path.join(args.eval_folder,dir)
+        if not os.path.isdir(cur_dir):
+            continue
+        print(f"Process dir {dir}.")
+        if cur_dir[-1]=="/":
+            cur_dir = cur_dir[:-1]
+        all_imgs = glob.glob(os.path.join(cur_dir,"*.jpg"))
+        if len(all_imgs) == 0:
+            print(f"ERROR: Find images in {cur_dir} faild.")
+        total_nr = len(all_imgs)
+        all_imgs = []
+        for i in range(total_nr):
+            all_imgs.append(os.path.join(cur_dir,f"img_{i+1:05d}.jpg"))
 
-        image = images[0].cpu().numpy()
-        # size at scale 1.0
-        base_size, center, scale = get_multi_scale_size(
-            image, cfg.DATASET.INPUT_SIZE, 1.0, min(cfg.TEST.SCALE_FACTOR)
-        )
-
-        with torch.no_grad():
-            final_heatmaps = None
-            tags_list = []
-            for idx, s in enumerate(sorted(cfg.TEST.SCALE_FACTOR, reverse=True)):
-                input_size = cfg.DATASET.INPUT_SIZE
-                image_resized, center, scale = resize_align_multi_scale(
-                    image, input_size, s, min(cfg.TEST.SCALE_FACTOR)
-                )
-                image_resized = transforms(image_resized)
-                image_resized = image_resized.unsqueeze(0).cuda()
-
-                outputs, heatmaps, tags = get_multi_stage_outputs(
-                    cfg, model, image_resized, cfg.TEST.FLIP_TEST,
-                    cfg.TEST.PROJECT2IMAGE, base_size
-                )
-
-                final_heatmaps, tags_list = aggregate_results(
-                    cfg, s, final_heatmaps, tags_list, heatmaps, tags
-                )
-
-            final_heatmaps = final_heatmaps / float(len(cfg.TEST.SCALE_FACTOR))
-            tags = torch.cat(tags_list, dim=4)
-            grouped, scores = parser.parse(
-                final_heatmaps, tags, cfg.TEST.ADJUST, cfg.TEST.REFINE
-            )
-            #final_results nx17x5  5(x,y,scores,tags0,tags1,...)
-            final_results = get_final_preds(
-                grouped, center, scale,
-                [final_heatmaps.size(3), final_heatmaps.size(2)]
+        save_path = cur_dir+".pkl"
+        cur_kp_result = []
+        cur_scores_result = []
+        img_shape = None
+        for i,ifn in enumerate(all_imgs):
+            sys.stdout.write(f"\r{i+1}/{total_nr}.   ")
+            image = cv2.imread(ifn, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)[:, :, ::-1]
+            img_shape = image.shape[:2]
+            # size at scale 1.0
+            base_size, center, scale = get_multi_scale_size(
+                image, cfg.DATASET.INPUT_SIZE, 1.0, min(cfg.TEST.SCALE_FACTOR)
             )
 
-        if cfg.TEST.LOG_PROGRESS:
-            pbar.update()
-        #wj
-        if i % cfg.PRINT_FREQ == 0:
-        #if True:
-            prefix = '{}_{}'.format(os.path.join(final_output_dir, 'result_valid'), i)
-            # logger.info('=> write {}'.format(prefix))
-            save_valid_image(image, final_results, '{}.jpg'.format(prefix), dataset=test_dataset.name)
-            # save_debug_images(cfg, image_resized, None, None, outputs, prefix)
+            with torch.no_grad():
+                final_heatmaps = None
+                tags_list = []
+                for idx, s in enumerate(sorted(cfg.TEST.SCALE_FACTOR, reverse=True)):
+                    input_size = cfg.DATASET.INPUT_SIZE
+                    image_resized, center, scale = resize_align_multi_scale(
+                        image, input_size, s, min(cfg.TEST.SCALE_FACTOR)
+                    )
+                    image_resized = transforms(image_resized)
+                    image_resized = image_resized.unsqueeze(0).cuda()
 
-        all_preds.append(final_results)
-        all_scores.append(scores)
+                    outputs, heatmaps, tags = get_multi_stage_outputs(
+                        cfg, model, image_resized, cfg.TEST.FLIP_TEST,
+                        cfg.TEST.PROJECT2IMAGE, base_size
+                    )
 
-    if cfg.TEST.LOG_PROGRESS:
-        pbar.close()
+                    final_heatmaps, tags_list = aggregate_results(
+                        cfg, s, final_heatmaps, tags_list, heatmaps, tags
+                    )
 
-    name_values, _ = test_dataset.evaluate(
-        cfg, all_preds, all_scores, final_output_dir
-    )
+                final_heatmaps = final_heatmaps / float(len(cfg.TEST.SCALE_FACTOR))
+                tags = torch.cat(tags_list, dim=4)
+                grouped, scores = parser.parse(
+                    final_heatmaps, tags, cfg.TEST.ADJUST, cfg.TEST.REFINE
+                )
+                #final_results nx17x5  5(x,y,scores,tags0,tags1,...)
+                final_results = get_final_preds(
+                    grouped, center, scale,
+                    [final_heatmaps.size(3), final_heatmaps.size(2)]
+                )
+                final_results = np.array(final_results)
+                if len(final_results)>0:
+                    cur_kp_result.append(final_results[:,:,:2])
+                    cur_scores_result.append(final_results[:,:,2])
+                else:
+                    cur_kp_result.append(final_results)
+                    cur_scores_result.append(final_results)
 
-    if isinstance(name_values, list):
-        for name_value in name_values:
-            _print_name_value(logger, name_value, cfg.MODEL.NAME)
-    else:
-        _print_name_value(logger, name_values, cfg.MODEL.NAME)
-
+        save_data = {
+            'frame_dir':dir,
+            'img_shape':img_shape,
+            'original_shape':img_shape,
+            'total_frames':total_nr,
+            'keypoint':cur_kp_result,
+            'keypoint_score':cur_scores_result,
+        }
+        with open(save_path,"wb") as f:
+            pickle.dump(save_data,f)
 
 if __name__ == '__main__':
     main()
