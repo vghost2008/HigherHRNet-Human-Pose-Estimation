@@ -200,3 +200,12 @@ def get_final_preds(grouped_joints, center, scale, heatmap_size):
         final_results.append(joints)
 
     return final_results
+
+def get_final_predsv1(grouped_joints):
+    final_results = []
+    for person in grouped_joints[0]:
+        joints = np.zeros((person.shape[0], 3))
+        joints = person[:,:3]
+        final_results.append(joints)
+
+    return final_results

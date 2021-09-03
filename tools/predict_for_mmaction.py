@@ -25,7 +25,7 @@ import torch.multiprocessing
 import pickle
 import numpy as np
 
-os.environ['CUDA_VISIBLE_DEVICES'] = "2"
+os.environ['CUDA_VISIBLE_DEVICES'] = "0"
 
 
 import _init_paths

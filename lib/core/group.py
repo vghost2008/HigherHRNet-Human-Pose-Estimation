@@ -282,3 +282,59 @@ class HeatmapParser(object):
             ans = [ans]
 
         return ans, scores
+
+    def parsev1(self, tag_k,ind_k,val_k):
+        ans = self.match(tag_k,ind_k,val_k)
+        print(ans)
+        #某个人的scores为他有所有点的平均
+        scores = [i[:, 2].mean() for i in ans[0]]
+
+        return ans, scores
+
+class OnlyTopK(object):
+    def __init__(self, cfg):
+        self.params = Params(cfg)
+        self.tag_per_joint = cfg.MODEL.TAG_PER_JOINT
+        self.pool = torch.nn.MaxPool2d(
+            cfg.TEST.NMS_KERNEL, 1, cfg.TEST.NMS_PADDING
+        )
+
+    def nms(self, det):
+        maxm = self.pool(det)
+        maxm = torch.eq(maxm, det).float()
+        det = det * maxm
+        return det
+
+    def top_k(self, det, tag):
+        # det = torch.Tensor(det, requires_grad=False)
+        # tag = torch.Tensor(tag, requires_grad=False)
+
+        det = self.nms(det)
+        res_det = det
+        num_images = det.size(0)
+        num_joints = det.size(1)
+        h = det.size(2)
+        w = det.size(3)
+        det = det.view(num_images, num_joints, -1)
+        val_k, ind = det.topk(self.params.max_num_people, dim=2)
+
+        tag = tag.view(tag.size(0), tag.size(1), w*h, -1)
+        if not self.tag_per_joint:
+            tag = tag.expand(-1, self.params.num_joints, -1, -1)
+
+        tag_k = torch.stack(
+            [
+                torch.gather(tag[:, :, :, i], 2, ind)
+                for i in range(tag.size(3))
+            ],
+            dim=3
+        )
+
+        x = ind % w
+        y = (ind / w).long()
+
+        ind_k = torch.stack((x, y), dim=3)
+        return tag_k,ind_k,val_k,res_det
+
+    def parse(self, det, tag, adjust=True, refine=True):
+        return self.top_k(det, tag)

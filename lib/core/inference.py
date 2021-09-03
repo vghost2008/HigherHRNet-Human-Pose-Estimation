@@ -71,7 +71,6 @@ def get_outputs(
 
     return outputs, heatmaps, tags
 
-
 def get_multi_stage_outputs(
         cfg, model, image, with_flip=False,
         project2image=False, size_projected=None
@@ -82,7 +81,7 @@ def get_multi_stage_outputs(
     heatmaps = []
     tags = []
 
-    outputs = model(image)
+    outputs = model(image) #return shape [1,34,128,176],[1,17,256,352]
     for i, output in enumerate(outputs):
         if len(outputs) > 1 and i != len(outputs) - 1:
             output = torch.nn.functional.interpolate(
@@ -172,6 +171,66 @@ def get_multi_stage_outputs(
 
     return outputs, heatmaps, tags
 
+def get_multi_stage_outputsv2(
+        cfg, model, image, with_flip=False,
+        project2image=False, size_projected=None
+):
+    # outputs = []
+    heatmaps_avg = 0
+    num_heatmaps = 0
+    heatmaps = []
+    tags = []
+
+    outputs = model(image) #return shape [1,34,128,176],[1,17,256,352]
+    for i, output in enumerate(outputs):
+        if len(outputs) > 1 and i != len(outputs) - 1:
+            output = torch.nn.functional.interpolate(
+                output,
+                size=(outputs[-1].size(2), outputs[-1].size(3)),
+                mode='bilinear',
+                align_corners=False
+            )
+
+        offset_feat = cfg.DATASET.NUM_JOINTS \
+            if cfg.LOSS.WITH_HEATMAPS_LOSS[i] else 0
+
+        if cfg.LOSS.WITH_HEATMAPS_LOSS[i] and cfg.TEST.WITH_HEATMAPS[i]:
+            heatmaps_avg += output[:, :cfg.DATASET.NUM_JOINTS]
+            num_heatmaps += 1
+
+        if cfg.LOSS.WITH_AE_LOSS[i] and cfg.TEST.WITH_AE[i]:
+            tags.append(output[:, offset_feat:])
+
+    if num_heatmaps > 0:
+        heatmaps.append(heatmaps_avg/num_heatmaps)
+
+    if cfg.DATASET.WITH_CENTER and cfg.TEST.IGNORE_CENTER:
+        heatmaps = [hms[:, :-1] for hms in heatmaps]
+        tags = [tms[:, :-1] for tms in tags]
+
+    if project2image and size_projected is not None:
+        heatmaps = [
+            torch.nn.functional.interpolate(
+                hms,
+                size=(size_projected[1], size_projected[0]),
+                mode='bilinear',
+                align_corners=False
+            )
+            for hms in heatmaps
+        ]
+
+        tags = [
+            torch.nn.functional.interpolate(
+                tms,
+                size=(size_projected[1], size_projected[0]),
+                mode='bilinear',
+                align_corners=False
+            )
+            for tms in tags
+        ]
+
+    return outputs, heatmaps, tags
+
 
 def aggregate_results(
         cfg, scale_factor, final_heatmaps, tags_list, heatmaps, tags
@@ -190,7 +249,7 @@ def aggregate_results(
         for tms in tags:
             tags_list.append(torch.unsqueeze(tms, dim=4))
 
-    heatmaps_avg = (heatmaps[0] + heatmaps[1])/2.0 if cfg.TEST.FLIP_TEST \
+    heatmaps_avg = (heatmaps[0] + heatmaps[1])/2.0 if len(heatmaps)==2 \
         else heatmaps[0]
 
     if final_heatmaps is None:

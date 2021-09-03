@@ -37,7 +37,7 @@ from fp16_utils.fp16util import network_to_half
 from utils.utils import create_logger
 from utils.utils import get_model_summary
 from utils.vis import save_debug_images
-from utils.vis import save_valid_image
+from utils.vis import save_valid_image,save_valid_imagev2
 from utils.transforms import resize_align_multi_scale
 from utils.transforms import get_final_preds
 from utils.transforms import get_multi_scale_size
@@ -159,6 +159,8 @@ def main():
     pbar = tqdm(total=len(images_files))
     for i, image_f in enumerate(images_files):
         image = cv2.imread(image_f,cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)[:,:,::-1]
+        #if image.shape[0]<256:
+            #image = cv2.resize(image,(image.shape[1]*2,image.shape[0]*2))
         image_name = os.path.basename(image_f)
         # size at scale 1.0
         base_size, center, scale = get_multi_scale_size(
@@ -202,7 +204,7 @@ def main():
         if True:
             prefix = os.path.join(final_output_dir,image_name)
             logger.info('=> write {}'.format(prefix))
-            save_valid_image(image, final_results, prefix, dataset=test_dataset.name)
+            save_valid_imagev2(image, final_results[:1], prefix, dataset=test_dataset.name,color=(0,255,0))
             # save_debug_images(cfg, image_resized, None, None, outputs, prefix)
 
         all_preds.append(final_results)

@@ -8,7 +8,7 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-
+from object_detection2.visualization import colors_tableau
 import math
 
 import cv2
@@ -46,14 +46,64 @@ def add_joints(image, joints, color, dataset='COCO'):
 
     return image
 
+def add_jointsv2(image, joints, color,dataset='COCO',r=5):
+    if dataset is not None:
+        part_idx = VIS_CONFIG[dataset]['part_idx']
+        part_orders = VIS_CONFIG[dataset]['part_orders']
 
-def save_valid_image(image, joints, file_name, dataset='COCO'):
+    def link(a, b, color):
+        if part_idx[a] < joints.shape[0] and part_idx[b] < joints.shape[0]:
+            jointa = joints[part_idx[a]]
+            jointb = joints[part_idx[b]]
+            if jointa[2] > 0.01 and jointb[2] > 0.01:
+                cv2.line(
+                    image,
+                    (int(jointa[0]), int(jointa[1])),
+                    (int(jointb[0]), int(jointb[1])),
+                    color,
+                    2
+                )
+
+
+    # add link
+    if dataset is not None:
+        for pair in part_orders:
+            link(pair[0], pair[1], color)
+
+    # add joints
+    for i,joint in enumerate(joints):
+        if joint[2] > 0.05 and joint[0]>1 and joint[1]>1:
+            cv2.circle(image, (int(joint[0]), int(joint[1])), r, colors_tableau[i], -1)
+            
+    return image
+
+def add_jointsv3(image, joints, color,r=5):
+    # add joints
+    for i,joint in enumerate(joints):
+        if joint[2] > 0.05 and joint[0]>1 and joint[1]>1:
+            cv2.circle(image, (int(joint[0]), int(joint[1])), r, color, -1)
+            
+    return image
+
+def save_valid_image(image, joints, file_name, dataset='COCO',color=None):
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
-
+    if color is None:
+        use_random_color=True
+    else:
+        use_random_color = False
     for person in joints:
-        color = np.random.randint(0, 255, size=3)
+        if use_random_color:
+            color = np.random.randint(0, 255, size=3)
         color = [int(i) for i in color]
-        add_joints(image, person, color, dataset=dataset)
+        add_jointsv2(image, person, color=color, dataset=dataset)
+
+    cv2.imwrite(file_name, image)
+
+def save_valid_imagev2(image, joints, file_name, dataset='COCO',color=None):
+    del dataset
+    image = np.zeros_like(image)
+    for person in joints:
+        add_jointsv3(image, person, color=(255,255,255), r=6)
 
     cv2.imwrite(file_name, image)
 
